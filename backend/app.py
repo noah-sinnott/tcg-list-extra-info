@@ -387,10 +387,12 @@ def health():
 @app.route('/<path:path>')
 def serve(path):
     """Serve React app"""
-    if path != "" and os.path.exists(os.path.join('frontend/build', path)):
-        return send_from_directory('frontend/build', path)
+    # In Docker, the structure is /app/frontend/build/
+    build_folder = 'frontend/build'
+    if path != "" and os.path.exists(os.path.join(build_folder, path)):
+        return send_from_directory(build_folder, path)
     else:
-        return send_from_directory('frontend/build', 'index.html')
+        return send_from_directory(build_folder, 'index.html')
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
