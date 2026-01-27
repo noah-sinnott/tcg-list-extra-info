@@ -398,6 +398,13 @@ def debug_files():
                 result["files"].append(os.path.join(root, file).replace(build_folder, ''))
     return jsonify(result)
 
+# Serve React App static files
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """Serve static files from React build"""
+    build_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'build')
+    return send_from_directory(os.path.join(build_folder, 'static'), filename)
+
 # Serve React App
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
