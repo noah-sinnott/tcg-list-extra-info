@@ -1,5 +1,6 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+import os
 import requests
 from bs4 import BeautifulSoup
 import time
@@ -380,6 +381,16 @@ def scrape_list():
 def health():
     """Health check endpoint"""
     return jsonify({"status": "healthy"})
+
+# Serve React App
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve(path):
+    """Serve React app"""
+    if path != "" and os.path.exists(os.path.join('frontend/build', path)):
+        return send_from_directory('frontend/build', path)
+    else:
+        return send_from_directory('frontend/build', 'index.html')
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
