@@ -382,6 +382,22 @@ def health():
     """Health check endpoint"""
     return jsonify({"status": "healthy"})
 
+@app.route('/api/debug/files', methods=['GET'])
+def debug_files():
+    """Debug endpoint to see what files exist"""
+    build_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'build')
+    result = {
+        "build_folder_path": build_folder,
+        "build_folder_exists": os.path.exists(build_folder),
+        "cwd": os.getcwd(),
+        "files": []
+    }
+    if os.path.exists(build_folder):
+        for root, dirs, files in os.walk(build_folder):
+            for file in files:
+                result["files"].append(os.path.join(root, file).replace(build_folder, ''))
+    return jsonify(result)
+
 # Serve React App
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
