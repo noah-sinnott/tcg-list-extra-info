@@ -3,10 +3,10 @@ FROM node:18-alpine as build
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY frontend/package*.json ./
 RUN npm install
 
-COPY . .
+COPY frontend/ ./
 RUN npm run build
 
 # Production stage
@@ -16,7 +16,7 @@ FROM nginx:alpine
 COPY --from=build /app/build /usr/share/nginx/html
 
 # Copy nginx template
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+COPY frontend/nginx.conf /etc/nginx/templates/default.conf.template
 
 # Nginx will replace $PORT in the template at runtime
 ENV PORT=8080
