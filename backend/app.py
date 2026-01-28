@@ -16,7 +16,14 @@ from webdriver_manager.chrome import ChromeDriverManager
 from tcgcsv_service import TCGCSVService
 
 app = Flask(__name__)
-CORS(app)
+# Configure CORS to allow Cloud Run frontend
+CORS(app, resources={
+    r"/api/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 # Initialize TCGPlayer CSV service
 tcgcsv_service = TCGCSVService()

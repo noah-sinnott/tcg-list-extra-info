@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import './App.css';
 
-const API_URL = 'http://localhost:5000/api';
+const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
 const ITEMS_PER_PAGE = 50;
 
 function App() {
