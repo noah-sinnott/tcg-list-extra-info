@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
 import requests
@@ -381,42 +381,6 @@ def scrape_list():
 def health():
     """Health check endpoint"""
     return jsonify({"status": "healthy"})
-
-@app.route('/api/debug/files', methods=['GET'])
-def debug_files():
-    """Debug endpoint to see what files exist"""
-    build_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'build')
-    result = {
-        "build_folder_path": build_folder,
-        "build_folder_exists": os.path.exists(build_folder),
-        "cwd": os.getcwd(),
-        "files": []
-    }
-    if os.path.exists(build_folder):
-        for root, dirs, files in os.walk(build_folder):
-            for file in files:
-                result["files"].append(os.path.join(root, file).replace(build_folder, ''))
-    return jsonify(result)
-
-# Serve React App static files
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    """Serve static files from React build"""
-    build_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'build')
-    return send_from_directory(os.path.join(build_folder, 'static'), filename)
-
-# Serve React App
-@app.route('/', defaults={'path': ''})
-@app.route('/<path:path>')
-def serve(path):
-    """Serve React app"""
-    # Get absolute path to build folder
-    build_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend', 'build')
-    
-    if path != "" and os.path.exists(os.path.join(build_folder, path)):
-        return send_from_directory(build_folder, path)
-    else:
-        return send_from_directory(build_folder, 'index.html')
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
