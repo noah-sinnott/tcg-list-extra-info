@@ -123,10 +123,34 @@ h1 {
   margin: 0;
 }
 
+.filters-container {
+  margin-bottom: 20px;
+}
+
+.filters-toggle {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transition: transform 0.2s, box-shadow 0.2s;
+  margin-bottom: 15px;
+}
+
+.filters-toggle:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+}
+
 .filters {
   display: flex;
   gap: 20px;
-  margin-bottom: 20px;
   flex-wrap: wrap;
   align-items: flex-start;
 }
@@ -220,10 +244,72 @@ h1 {
   font-size: 14px;
 }
 
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 20px;
+  margin-top: 20px;
+}
+
+.card-item {
+  position: relative;
+  aspect-ratio: 2 / 3;
+  border-radius: 10px;
+  overflow: hidden;
+  background-size: cover;
+  background-position: center;
+  background-color: #f0f0f0;
+  cursor: pointer;
+  transition: transform 0.3s, box-shadow 0.3s;
+  text-decoration: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.card-item:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.card-info {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 70%, transparent 100%);
+  padding: 15px;
+  color: white;
+}
+
+.card-name {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 5px;
+  line-height: 1.3;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.card-set {
+  font-size: 11px;
+  opacity: 0.9;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+.card-rarity {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.95;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+}
+
 .table-container {
   overflow-x: auto;
   border-radius: 10px;
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  display: none;
 }
 
 .cards-table {
@@ -274,18 +360,7 @@ h1 {
   height: auto;
   border-radius: 5px;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-}
-
-.card-name {
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 4px;
-}
-
-.card-set {
-  font-size: 12px;
-  color: #999;
-  font-style: italic;
+  display: none;
 }
 
 .card-group {
@@ -358,16 +433,17 @@ h1 {
     margin-top: 0;
   }
 
-  .cards-table {
-    font-size: 14px;
+  .cards-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 15px;
   }
 
-  .cards-table th,
-  .cards-table td {
-    padding: 10px;
+  .card-name {
+    font-size: 12px;
   }
 
-  .card-image {
-    width: 60px;
+  .card-set,
+  .card-rarity {
+    font-size: 10px;
   }
 }

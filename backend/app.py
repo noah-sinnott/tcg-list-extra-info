@@ -1,9 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import os
-import requests
 from bs4 import BeautifulSoup
-import time
 import re
 import unicodedata
 from selenium import webdriver
@@ -15,8 +12,9 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from tcgcsv_service import TCGCSVService
 
+
+
 app = Flask(__name__)
-# Configure CORS to allow Cloud Run frontend
 CORS(app, resources={
     r"/api/*": {
         "origins": "*",
@@ -24,16 +22,13 @@ CORS(app, resources={
         "allow_headers": ["Content-Type"]
     }
 })
-
-# Initialize TCGPlayer CSV service
 tcgcsv_service = TCGCSVService()
 
 
 
 
-def get_list_cards_selenium(list_url):
-    print(f"Starting to scrape list from: {list_url}")
-    
+
+def get_list_cards_selenium(list_url):    
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
@@ -43,31 +38,20 @@ def get_list_cards_selenium(list_url):
     chrome_options.add_argument("--disable-logging")
     chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-    
     driver = None
     try:
-        print("Initializing Chrome WebDriver...")
         service = Service(ChromeDriverManager().install())
         driver = webdriver.Chrome(service=service, options=chrome_options)
-        
-        print("Loading webpage...")
         driver.get(list_url)
-        
-        # Wait for cards to load
-        print("Waiting for cards to load...")
         wait = WebDriverWait(driver, 10)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-cardid]")))
-        time.sleep(2)
-        
-        print("Parsing card data...")
         soup = BeautifulSoup(driver.page_source, "html.parser")
         cards_by_set = {}
         card_elements = soup.select("div[data-cardid]")
-                
         for card_elem in card_elements:
             card_name = card_elem.get("data-name", "")
             card_number = card_elem.get("data-number", "")
-            
+
             if not card_name or not card_number:
                 continue
             
@@ -87,7 +71,6 @@ def get_list_cards_selenium(list_url):
                 "url": card_url
             })
         
-        print(f"Successfully scraped {len(card_elements)} cards from {len(cards_by_set)} sets")
         return cards_by_set
         
     finally:
@@ -98,84 +81,54 @@ def get_list_cards_selenium(list_url):
 
 
 
-
 def normalize_text(text):
-    """Normalize text by removing special characters and converting to lowercase"""
-    # Convert to lowercase
     normalized = text.lower()
-    # Normalize unicode characters (convert accented characters to ASCII equivalents)
-    # NFD = Canonical Decomposition (separates base characters from diacritics)
     normalized = unicodedata.normalize('NFD', normalized)
-    # Remove diacritical marks (accents)
     normalized = ''.join(char for char in normalized if unicodedata.category(char) != 'Mn')
-    # Remove all non-alphanumeric characters except spaces
     normalized = re.sub(r'[^a-z0-9\s]', '', normalized)
-    # Remove extra spaces
     normalized = re.sub(r'\s+', ' ', normalized).strip()
     return normalized
 
 
 def extract_card_suffixes(text):
-    """Extract special card suffixes like ex, vmax, gx, v, vstar"""
     suffixes = []
     text_lower = text.lower()
-    
-    # Check for these suffixes in order (check longer ones first to avoid conflicts)
     special_suffixes = ['vmax', 'vstar', 'ex', 'gx', 'v']
-    
     for suffix in special_suffixes:
-        # Check if suffix appears as a separate word at the end or in the text
         if re.search(r'\b' + suffix + r'\b', text_lower):
             suffixes.append(suffix)
-    
     return set(suffixes)
 
 
 def match_card_to_product(card_info, products):
-    """Try to match a card by number and name to a product in the list"""
     card_number = card_info["number"]
     card_name = card_info["name"]
-    
-    # Normalize card number (strip leading zeros)
     normalized_card_number = card_number.lstrip("0") or "0"
     normalized_card_name = normalize_text(card_name)
     card_suffixes = extract_card_suffixes(card_name)
-    
     for product in products:
-        # Get both cleanName and name for checking
         product_names = []
         if product.get("cleanName"):
             product_names.append(product.get("cleanName"))
         if product.get("name"):
             product_names.append(product.get("name"))
         
-        # Check extended data for card number
         extended_data = product.get("extendedData", [])
         for data in extended_data:
             if data.get("name") == "Number":
                 product_number = data.get("value", "")
-                # Handle numbers like "22/107" - extract first part
                 if "/" in product_number:
                     product_number = product_number.split("/")[0]
-                # Strip leading zeros for comparison
                 product_number = product_number.lstrip("0") or "0"
-                
-                # Match by number AND name (name can be substring)
                 if product_number == normalized_card_number:
-                    # Check if card name matches any of the product names
                     for product_name in product_names:
                         normalized_product_name = normalize_text(product_name)
                         product_suffixes = extract_card_suffixes(product_name)
-                        
-                        # Check if suffixes match
                         if card_suffixes != product_suffixes:
                             continue
-                        
-                        # Check name similarity
                         if normalized_card_name in normalized_product_name or normalized_product_name in normalized_card_name:
                             return product
                 break
-    
     return None
 
 
@@ -383,11 +336,6 @@ def scrape_list():
     except Exception as e:
         print(f"Error: {str(e)}")
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
-
-@app.route('/api/health', methods=['GET'])
-def health():
-    """Health check endpoint"""
-    return jsonify({"status": "healthy"})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
