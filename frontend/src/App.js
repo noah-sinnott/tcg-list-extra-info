@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 
 const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
+// const API_URL = 'http://127.0.0.1:5000/api';
+
 const ITEMS_PER_PAGE = 50;
 
 function App() {
-  const [url, setUrl] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [url, setUrl] = useState(searchParams.get('url') || '');
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -17,8 +21,7 @@ function App() {
   const [selectedRarities, setSelectedRarities] = useState([]);
   const observerTarget = useRef(null);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const scrapeUrl = async (urlToScrape) => {
     setError('');
     setCards([]);
     setDisplayedCount(ITEMS_PER_PAGE);
@@ -28,7 +31,7 @@ function App() {
     setLoading(true);
 
     try {
-      const response = await axios.post(`${API_URL}/scrape`, { url });
+      const response = await axios.post(`${API_URL}/scrape`, { url: urlToScrape });
       setCards(response.data.cards);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to scrape list. Please try again.');
@@ -36,6 +39,22 @@ function App() {
       setLoading(false);
     }
   };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    // Update URL with the new url parameter
+    setSearchParams({ url });
+    await scrapeUrl(url);
+  };
+
+  // Auto-scrape on load if URL parameter exists
+  useEffect(() => {
+    const urlParam = searchParams.get('url');
+    if (urlParam) {
+      scrapeUrl(urlParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Intersection Observer for lazy loading
   useEffect(() => {
