@@ -37,6 +37,9 @@ h1 {
   border-radius: 10px;
   font-size: 16px;
   transition: border-color 0.3s;
+  background: white !important;
+  background-color: #ffffff !important;
+  color: #333333;
 }
 
 .url-input:focus {
@@ -114,6 +117,8 @@ h1 {
 
 .results {
   margin-top: 30px;
+  background: transparent;
+  color: #333333;
 }
 
 .results-header {
@@ -121,6 +126,7 @@ h1 {
   justify-content: flex-start;
   align-items: center;
   margin-bottom: 20px;
+  background: transparent;
 }
 
 .results-header h2 {
@@ -130,6 +136,7 @@ h1 {
 
 .filters-container {
   margin-bottom: 20px;
+  background: transparent;
 }
 
 .filters-toggle {
@@ -158,6 +165,7 @@ h1 {
   gap: 20px;
   flex-wrap: wrap;
   align-items: flex-start;
+  background: transparent;
 }
 
 .filter-input {
@@ -165,9 +173,11 @@ h1 {
   border: 2px solid #e0e0e0;
   border-radius: 8px;
   font-size: 14px;
-  background: white;
+  background: white !important;
+  background-color: #ffffff !important;
   transition: border-color 0.3s;
   min-width: 250px;
+  color: #333333;
 }
 
 .filter-input:focus {
@@ -195,10 +205,12 @@ h1 {
   padding: 12px;
   border: 2px solid #e0e0e0;
   border-radius: 8px;
-  background: white;
+  background: white !important;
+  background-color: #ffffff !important;
   max-height: 250px;
   overflow-y: auto;
   min-width: 220px;
+  color: #333333;
 }
 
 .checkbox-label {
