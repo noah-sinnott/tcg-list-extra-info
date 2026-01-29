@@ -1,12 +1,14 @@
 .App {
   min-height: 100vh;
   padding: 20px;
+  background: transparent;
 }
 
 .container {
   max-width: 1400px;
   margin: 0 auto;
-  background: white;
+  background: #ffffff;
+  background-color: #ffffff;
   border-radius: 20px;
   padding: 40px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -258,7 +260,7 @@ h1 {
   overflow: hidden;
   background-size: contain;
   background-repeat: no-repeat;
-  background-position: center;
+  background-position: center top;
   background-color: #f0f0f0;
   cursor: pointer;
   transition: transform 0.3s, box-shadow 0.3s;
