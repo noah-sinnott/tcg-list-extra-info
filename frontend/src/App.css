@@ -2,16 +2,19 @@
   min-height: 100vh;
   padding: 20px;
   background: transparent;
+  color-scheme: light;
 }
 
 .container {
   max-width: 1400px;
   margin: 0 auto;
-  background: #ffffff;
-  background-color: #ffffff;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
   border-radius: 20px;
   padding: 40px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  color: #333333;
+  color-scheme: light;
 }
 
 h1 {

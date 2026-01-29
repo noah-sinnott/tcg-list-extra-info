@@ -5,8 +5,10 @@
 }
 
 html {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
   min-height: 100vh;
+  color-scheme: light;
 }
 
 body {
@@ -15,8 +17,11 @@ body {
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #667eea !important;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
   min-height: 100vh;
+  color-scheme: light;
+  color: #333333;
 }
 
 code {
