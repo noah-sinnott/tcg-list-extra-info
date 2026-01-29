@@ -256,7 +256,8 @@ h1 {
   aspect-ratio: 2 / 3;
   border-radius: 10px;
   overflow: hidden;
-  background-size: cover;
+  background-size: contain;
+  background-repeat: no-repeat;
   background-position: center;
   background-color: #f0f0f0;
   cursor: pointer;
@@ -423,6 +424,7 @@ h1 {
   .filter-input {
     width: 100%;
     min-width: unset;
+    font-size: 16px; /* Prevents zoom on iOS */
   }
 
   .checkbox-group {
@@ -434,7 +436,7 @@ h1 {
   }
 
   .cards-grid {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
     gap: 15px;
   }
 
@@ -445,5 +447,12 @@ h1 {
   .card-set,
   .card-rarity {
     font-size: 10px;
+  }
+}
+
+@media (max-width: 400px) {
+  .cards-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
   }
 }
