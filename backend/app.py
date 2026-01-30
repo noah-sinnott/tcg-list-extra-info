@@ -3,6 +3,7 @@ from flask_cors import CORS
 from bs4 import BeautifulSoup
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -24,6 +25,9 @@ tcgcsv_service = TCGCSVService()
 # Initialize WebDriver pool at startup
 driver_pool = get_pool(pool_size=1)
 
+# In-memory cache for indexed products (for faster lookups)
+products_index_cache = {}
+
 
 
 def get_list_cards_selenium(list_url):
@@ -36,7 +40,7 @@ def get_list_cards_selenium(list_url):
             raise Exception("Could not get WebDriver from pool")
         
         driver.get(list_url)
-        wait = WebDriverWait(driver, 10)
+        wait = WebDriverWait(driver, 7)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-cardid]")))
         soup = BeautifulSoup(driver.page_source, "html.parser")
         cards_by_set = {}
@@ -56,16 +60,11 @@ def get_list_cards_selenium(list_url):
             card_link = card_elem.select_one("a[href^='/card/']")
             card_url = card_link.get("href", "") if card_link else ""
             
-            # Extract pokedex number from the card number paragraph
-            pokedex_number_elem = card_elem.select_one("div.flex.justify-between.mb-0 p.text-gray-500")
-            pokedex_number = pokedex_number_elem.get_text(strip=True) if pokedex_number_elem else ""
-            
             if set_name not in cards_by_set:
                 cards_by_set[set_name] = []
             cards_by_set[set_name].append({
                 "name": card_name,
                 "number": card_number,
-                "pokedex_number": pokedex_number,
                 "url": card_url
             })
         
@@ -98,35 +97,51 @@ def extract_card_suffixes(text):
     return set(suffixes)
 
 
-def match_card_to_product(card_info, products):
-    card_number = card_info["number"]
-    card_name = card_info["name"]
-    normalized_card_number = card_number.lstrip("0") or "0"
-    normalized_card_name = normalize_text(card_name)
-    card_suffixes = extract_card_suffixes(card_name)
+def build_products_index(products):
+    """Build an index of products by card number for fast lookup"""
+    index = {}
     for product in products:
-        product_names = []
-        if product.get("cleanName"):
-            product_names.append(product.get("cleanName"))
-        if product.get("name"):
-            product_names.append(product.get("name"))
-        
         extended_data = product.get("extendedData", [])
         for data in extended_data:
             if data.get("name") == "Number":
                 product_number = data.get("value", "")
                 if "/" in product_number:
                     product_number = product_number.split("/")[0]
-                product_number = product_number.lstrip("0") or "0"
-                if product_number == normalized_card_number:
-                    for product_name in product_names:
-                        normalized_product_name = normalize_text(product_name)
-                        product_suffixes = extract_card_suffixes(product_name)
-                        if card_suffixes != product_suffixes:
-                            continue
-                        if normalized_card_name in normalized_product_name or normalized_product_name in normalized_card_name:
-                            return product
+                # Normalize number (remove leading zeros)
+                normalized_number = product_number.lstrip("0") or "0"
+                if normalized_number not in index:
+                    index[normalized_number] = []
+                index[normalized_number].append(product)
                 break
+    return index
+
+
+def match_card_to_product(card_info, products_index):
+    """Match a card to a product using indexed lookup"""
+    card_number = card_info["number"]
+    card_name = card_info["name"]
+    normalized_card_number = card_number.lstrip("0") or "0"
+    normalized_card_name = normalize_text(card_name)
+    card_suffixes = extract_card_suffixes(card_name)
+    
+    # Use indexed lookup - only check products with matching card number
+    matching_products = products_index.get(normalized_card_number, [])
+    
+    for product in matching_products:
+        product_names = []
+        if product.get("cleanName"):
+            product_names.append(product.get("cleanName"))
+        if product.get("name"):
+            product_names.append(product.get("name"))
+        
+        for product_name in product_names:
+            normalized_product_name = normalize_text(product_name)
+            product_suffixes = extract_card_suffixes(product_name)
+            if card_suffixes != product_suffixes:
+                continue
+            if normalized_card_name in normalized_product_name or normalized_product_name in normalized_card_name:
+                return product
+    
     return None
 
 
@@ -208,8 +223,14 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
         if not products:
             return None
         
-        # Try to match card
-        product = match_card_to_product(card_info, products)
+        # Build index for this group if not already done (fast, happens in memory)
+        if group_id not in products_index_cache:
+            products_index_cache[group_id] = build_products_index(products)
+        
+        products_index = products_index_cache[group_id]
+        
+        # Try to match card using indexed lookup
+        product = match_card_to_product(card_info, products_index)
         matched_group_name = None
         
         # Store the group name if we found a match
@@ -254,7 +275,12 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
                 
                 related_products = products_cache[related_gid]
                 if related_products:
-                    product = match_card_to_product(card_info, related_products)
+                    # Build index for related group if needed
+                    if related_gid not in products_index_cache:
+                        products_index_cache[related_gid] = build_products_index(related_products)
+                    
+                    related_products_index = products_index_cache[related_gid]
+                    product = match_card_to_product(card_info, related_products_index)
                     if product:
                         matched_group_name = related_name
                         break
@@ -274,7 +300,6 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
             "rarity": extended_data_dict.get("Rarity", ""),
             "group_name": matched_group_name or set_name,
             "set_name": set_name,
-            "pokedex_number": card_info.get('pokedex_number', ''),
             "card_url": f"https://mytcgcollection.com{card_info.get('url', '')}" if card_info.get('url') else "",
         }
     except Exception as e:
@@ -307,21 +332,47 @@ def scrape_list():
         if not all_groups:
             return jsonify({"error": "Failed to fetch TCGPlayer groups"}), 500
         
-        # Process cards
+        # Process cards in parallel
         results = []
         products_cache = {}
         total_cards = sum(len(cards) for cards in cards_by_set.values())
         
+        # Flatten cards with their set names for parallel processing
+        card_tasks = []
         for set_name, card_infos in cards_by_set.items():
-            
             for card_info in card_infos:
-   
-                card_details = get_card_details_from_tcgplayer(
-                    card_info, set_name, all_groups, products_cache
-                )
+                card_tasks.append((card_info, set_name))
+        
+        print(f"Processing {total_cards} cards in parallel...")
+        
+        # Process cards in parallel with ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            # Submit all tasks
+            future_to_card = {
+                executor.submit(
+                    get_card_details_from_tcgplayer,
+                    card_info,
+                    set_name,
+                    all_groups,
+                    products_cache
+                ): (card_info, set_name)
+                for card_info, set_name in card_tasks
+            }
+            
+            # Collect results as they complete
+            completed = 0
+            for future in as_completed(future_to_card):
+                completed += 1
+                if completed % 10 == 0 or completed == total_cards:
+                    print(f"Progress: {completed}/{total_cards} cards processed")
                 
-                if card_details:
-                    results.append(card_details)
+                try:
+                    card_details = future.result()
+                    if card_details:
+                        results.append(card_details)
+                except Exception as e:
+                    card_info, set_name = future_to_card[future]
+                    print(f"Error processing {card_info['name']}: {e}")
         
         print(f"\nCompleted: {len(results)}/{total_cards} cards matched")
         

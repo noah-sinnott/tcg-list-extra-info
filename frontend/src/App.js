@@ -18,7 +18,6 @@ function App() {
   const [selectedSets, setSelectedSets] = useState([]);
   const [selectedRarities, setSelectedRarities] = useState([]);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const [sortBy, setSortBy] = useState('alphabet'); // 'alphabet' or 'pokedex'
 
   const scrapeUrl = async (urlToScrape) => {
     setError('');
@@ -130,12 +129,6 @@ function App() {
                 className="filter-input"
               />
               <button 
-                className="sort-toggle-btn"
-                onClick={() => setSortBy(sortBy === 'alphabet' ? 'pokedex' : 'alphabet')}
-              >
-                Sort: {sortBy === 'alphabet' ? 'A-Z' : 'Pokédex #'}
-              </button>
-              <button 
                 className="filters-toggle"
                 onClick={() => setFiltersExpanded(!filtersExpanded)}
               >
@@ -196,15 +189,9 @@ function App() {
 
             <div className="cards-grid">
               {cards.sort((a, b) => {
-      if (sortBy === 'pokedex') {
-        const aNum = parseInt(a.pokedex_number) || 9999;
-        const bNum = parseInt(b.pokedex_number) || 9999;
-        return aNum - bNum;
-      } else {
-        const aName = (a.name || '').toLowerCase();
-        const bName = (b.name || '').toLowerCase();
-        return aName.localeCompare(bName);
-      }
+      const aName = (a.name || '').toLowerCase();
+      const bName = (b.name || '').toLowerCase();
+      return aName.localeCompare(bName);
     }).filter(card => {
       const term = searchTerm.toLowerCase();
       const matchesSearch = !searchTerm || 
@@ -232,7 +219,6 @@ function App() {
                       {card.rarity && <div className="card-rarity">{card.rarity}</div>}
                     </div>
                   </div>
-                  {card.pokedex_number && <div className="card-pokedex">#{card.pokedex_number}</div>}
                 </a>
               ))}
             </div>
