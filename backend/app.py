@@ -3,14 +3,11 @@ from flask_cors import CORS
 from bs4 import BeautifulSoup
 import re
 import unicodedata
-from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 from tcgcsv_service import TCGCSVService
+from webdriver_pool_service import get_pool
 
 
 
@@ -24,24 +21,20 @@ CORS(app, resources={
 })
 tcgcsv_service = TCGCSVService()
 
+# Initialize WebDriver pool at startup
+driver_pool = get_pool(pool_size=1)
 
 
 
-
-def get_list_cards_selenium(list_url):    
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--log-level=3")
-    chrome_options.add_argument("--disable-logging")
-    chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+def get_list_cards_selenium(list_url):
+    """Scrape cards from list URL using a pooled WebDriver"""
     driver = None
     try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        # Get driver from pool
+        driver = driver_pool.get_driver(timeout=30)
+        if not driver:
+            raise Exception("Could not get WebDriver from pool")
+        
         driver.get(list_url)
         wait = WebDriverWait(driver, 10)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-cardid]")))
@@ -63,11 +56,16 @@ def get_list_cards_selenium(list_url):
             card_link = card_elem.select_one("a[href^='/card/']")
             card_url = card_link.get("href", "") if card_link else ""
             
+            # Extract pokedex number from the card number paragraph
+            pokedex_number_elem = card_elem.select_one("div.flex.justify-between.mb-0 p.text-gray-500")
+            pokedex_number = pokedex_number_elem.get_text(strip=True) if pokedex_number_elem else ""
+            
             if set_name not in cards_by_set:
                 cards_by_set[set_name] = []
             cards_by_set[set_name].append({
                 "name": card_name,
                 "number": card_number,
+                "pokedex_number": pokedex_number,
                 "url": card_url
             })
         
@@ -75,8 +73,8 @@ def get_list_cards_selenium(list_url):
         
     finally:
         if driver:
-            driver.quit()
-            print("Chrome WebDriver closed")
+            # Return driver to pool (it will be closed and replaced)
+            driver_pool.return_driver(driver)
 
 
 
@@ -276,6 +274,7 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
             "rarity": extended_data_dict.get("Rarity", ""),
             "group_name": matched_group_name or set_name,
             "set_name": set_name,
+            "pokedex_number": card_info.get('pokedex_number', ''),
             "card_url": f"https://mytcgcollection.com{card_info.get('url', '')}" if card_info.get('url') else "",
         }
     except Exception as e:

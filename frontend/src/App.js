@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 
-const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
-// const API_URL = 'http://127.0.0.1:5000/api';
+// const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
+const API_URL = 'http://127.0.0.1:5000/api';
 
 function App() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -17,7 +17,8 @@ function App() {
 
   const [selectedSets, setSelectedSets] = useState([]);
   const [selectedRarities, setSelectedRarities] = useState([]);
-  const [filtersExpanded, setFiltersExpanded] = useState(true);
+  const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [sortBy, setSortBy] = useState('alphabet'); // 'alphabet' or 'pokedex'
 
   const scrapeUrl = async (urlToScrape) => {
     setError('');
@@ -120,24 +121,31 @@ function App() {
               <h2>Found {cards.length} cards</h2>
             </div>
 
-            <div className="filters-container">
+            <div className="search-container">
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search by name..."
+                className="filter-input"
+              />
+              <button 
+                className="sort-toggle-btn"
+                onClick={() => setSortBy(sortBy === 'alphabet' ? 'pokedex' : 'alphabet')}
+              >
+                Sort: {sortBy === 'alphabet' ? 'A-Z' : 'Pokédex #'}
+              </button>
               <button 
                 className="filters-toggle"
                 onClick={() => setFiltersExpanded(!filtersExpanded)}
               >
                 {filtersExpanded ? '▼' : '▶'} Filters
               </button>
-              
-              {filtersExpanded && (
+            </div>
+
+            {filtersExpanded && (
+              <div className="filters-container">
                 <div className="filters">
-                  <input
-                    type="text"
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    placeholder="Search by name..."
-                    className="filter-input"
-                  />
-                  
                   <div className="filter-group">
                     <label className="filter-label">Sets ({setCounts.length})</label>
                     <div className="checkbox-group">
@@ -183,14 +191,20 @@ function App() {
                     </button>
                   )}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             <div className="cards-grid">
               {cards.sort((a, b) => {
-      const aName = (a.name || '').toLowerCase();
-      const bName = (b.name || '').toLowerCase();
-      return aName.localeCompare(bName);
+      if (sortBy === 'pokedex') {
+        const aNum = parseInt(a.pokedex_number) || 9999;
+        const bNum = parseInt(b.pokedex_number) || 9999;
+        return aNum - bNum;
+      } else {
+        const aName = (a.name || '').toLowerCase();
+        const bName = (b.name || '').toLowerCase();
+        return aName.localeCompare(bName);
+      }
     }).filter(card => {
       const term = searchTerm.toLowerCase();
       const matchesSearch = !searchTerm || 
@@ -218,6 +232,7 @@ function App() {
                       {card.rarity && <div className="card-rarity">{card.rarity}</div>}
                     </div>
                   </div>
+                  {card.pokedex_number && <div className="card-pokedex">#{card.pokedex_number}</div>}
                 </a>
               ))}
             </div>
