@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 
-// const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
-const API_URL = 'http://127.0.0.1:5000/api';
+const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
+// const API_URL = 'http://127.0.0.1:5000/api';
 
 function App() {
   const [searchParams, setSearchParams] = useSearchParams();
