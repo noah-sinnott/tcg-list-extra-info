@@ -1,15 +1,15 @@
 * {
   color-scheme: light only !important;
+  -webkit-color-scheme: light !important;
 }
 
-html, body {
-  color-scheme: light only !important;
-}
 
 .App {
   min-height: 100vh;
   padding: 20px;
+  background: transparent;
   color-scheme: light only !important;
+  -webkit-color-scheme: light !important;
 }
 
 .container {
@@ -17,11 +17,15 @@ html, body {
   margin: 0 auto;
   background: #ffffff !important;
   background-color: #ffffff !important;
+  -webkit-background: #ffffff !important;
   border-radius: 20px;
   padding: 40px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  color: #333333;
-  color-scheme: light;
+  color: #333333 !important;
+  color-scheme: light only !important;
+  -webkit-color-scheme: light !important;
+  forced-color-adjust: none !important;
+  -webkit-forced-color-adjust: none !important;
 }
 
 h1 {
@@ -56,6 +60,10 @@ h1 {
 
 .submit-btn {
   padding: 15px 30px;
+  background: -moz-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -webkit-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -o-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -ms-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
@@ -157,6 +165,10 @@ h1 {
 
 .sort-toggle-btn {
   padding: 10px 20px;
+  background: -moz-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -webkit-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -o-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -ms-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
@@ -179,6 +191,10 @@ h1 {
 }
 
 .filters-toggle {
+  background: -moz-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -webkit-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -o-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -ms-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
   border: none;
@@ -331,6 +347,10 @@ h1 {
 }
 
 .card-info {
+  background: -moz-linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 70%, transparent 100%);
+  background: -webkit-linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 70%, transparent 100%);
+  background: -o-linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 70%, transparent 100%);
+  background: -ms-linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 70%, transparent 100%);
   background: linear-gradient(to top, rgba(0, 0, 0, 0.9) 0%, rgba(0, 0, 0, 0.7) 70%, transparent 100%);
   padding: 15px;
   color: white;
@@ -390,6 +410,10 @@ h1 {
 }
 
 .cards-table thead {
+  background: -moz-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -webkit-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -o-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: -ms-linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
 }
