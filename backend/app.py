@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -27,6 +28,9 @@ driver_pool = get_pool(pool_size=1)
 
 # In-memory cache for indexed products (for faster lookups)
 products_index_cache = {}
+
+# Thread lock for products cache to prevent duplicate fetches
+products_cache_lock = Lock()
 
 
 
@@ -151,7 +155,8 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
     try:
         # Special case mappings
         set_name_mappings = {
-            "Scarlet & Violet Black Star Promos": "SV: Scarlet & Violet Promo Cards"
+            "Scarlet & Violet Black Star Promos": "SV: Scarlet & Violet Promo Cards",
+            "SWSH Black Star Promos": "SWSH: Sword & Shield Promo Cards"
         }
         
         # Check if this is a special case
@@ -215,9 +220,10 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
             print(f"  No group found for set: {set_name}")
             return None
         
-        # Get products for this group (with caching)
-        if group_id not in products_cache:
-            products_cache[group_id] = tcgcsv_service.get_products(group_id)
+        # Get products for this group (with caching and thread safety)
+        with products_cache_lock:
+            if group_id not in products_cache:
+                products_cache[group_id] = tcgcsv_service.get_products(group_id)
         
         products = products_cache[group_id]
         if not products:
@@ -270,8 +276,9 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
             
             # Try to find the card in related groups
             for related_name, related_gid in related_groups:
-                if related_gid not in products_cache:
-                    products_cache[related_gid] = tcgcsv_service.get_products(related_gid)
+                with products_cache_lock:
+                    if related_gid not in products_cache:
+                        products_cache[related_gid] = tcgcsv_service.get_products(related_gid)
                 
                 related_products = products_cache[related_gid]
                 if related_products:
