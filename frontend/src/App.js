@@ -1,10 +1,62 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 
 const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
 // const API_URL = 'http://127.0.0.1:5000/api';
+
+function LazyCard({ card }) {
+  const [isVisible, setIsVisible] = useState(false);
+  const cardRef = useRef(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setIsVisible(true);
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      {
+        rootMargin: '200px', // Start loading 200px before the card is visible
+      }
+    );
+
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+
+    return () => {
+      if (cardRef.current) {
+        observer.unobserve(cardRef.current);
+      }
+    };
+  }, []);
+
+  return (
+    <a
+      ref={cardRef}
+      href={card.card_url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="card-item"
+      style={{
+        backgroundImage: isVisible && card.image_url ? `url(${card.image_url})` : 'none'
+      }}
+    >
+      <div className="card-info">
+        <div className="card-name">{card.name || 'Unknown'}</div>
+        <div className="card-details">
+          <div className="card-set">{card.set_name || ''}</div>
+          {card.rarity && <div className="card-rarity">{card.rarity}</div>}
+        </div>
+      </div>
+    </a>
+  );
+}
 
 function App() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -14,9 +66,12 @@ function App() {
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  
+  const hasLoadedInitialUrl = useRef(false);
 
   const [selectedSets, setSelectedSets] = useState([]);
   const [selectedRarities, setSelectedRarities] = useState([]);
+  const [selectedGroups, setSelectedGroups] = useState([]);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
 
   const scrapeUrl = async (urlToScrape) => {
@@ -24,6 +79,7 @@ function App() {
     setCards([]);
     setSelectedSets([]);
     setSelectedRarities([]);
+    setSelectedGroups([]);
     setSearchTerm('');
     setLoading(true);
 
@@ -45,7 +101,8 @@ function App() {
 
   useEffect(() => {
     const urlParam = searchParams.get('url');
-    if (urlParam) {
+    if (urlParam && !hasLoadedInitialUrl.current) {
+      hasLoadedInitialUrl.current = true;
       scrapeUrl(urlParam);
     }
   }, []);
@@ -58,7 +115,7 @@ function App() {
         counts[card.set_name] = (counts[card.set_name] || 0) + 1;
       }
     });
-    return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   };
 
   const getRarityCounts = () => {
@@ -68,7 +125,16 @@ function App() {
         counts[card.rarity] = (counts[card.rarity] || 0) + 1;
       }
     });
-    return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  };
+
+  const getGroupCounts = () => {
+    const counts = {};
+    cards.forEach(card => {
+      const groupName = card.group_name || 'Unknown Group';
+      counts[groupName] = (counts[groupName] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   };
 
   const toggleSet = (set) => {
@@ -83,8 +149,15 @@ function App() {
     );
   };
 
+  const toggleGroup = (group) => {
+    setSelectedGroups(prev => 
+      prev.includes(group) ? prev.filter(g => g !== group) : [...prev, group]
+    );
+  };
+
   const setCounts = getSetCounts();
   const rarityCounts = getRarityCounts();
+  const groupCounts = getGroupCounts();
 
   return (
     <div className="App">
@@ -171,12 +244,29 @@ function App() {
                     </div>
                   </div>
 
-                  {(searchTerm || selectedSets.length > 0 || selectedRarities.length > 0) && (
+                  <div className="filter-group">
+                    <label className="filter-label">Groups ({groupCounts.length})</label>
+                    <div className="checkbox-group">
+                      {groupCounts.map(([group, count]) => (
+                        <label key={group} className="checkbox-label">
+                          <input
+                            type="checkbox"
+                            checked={selectedGroups.includes(group)}
+                            onChange={() => toggleGroup(group)}
+                          />
+                          <span>{group} ({count})</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  {(searchTerm || selectedSets.length > 0 || selectedRarities.length > 0 || selectedGroups.length > 0) && (
                     <button 
                       onClick={() => {
                         setSearchTerm('');
                         setSelectedSets([]);
                         setSelectedRarities([]);
+                        setSelectedGroups([]);
                       }}
                       className="clear-filters-btn"
                     >
@@ -199,27 +289,11 @@ function App() {
       
       const matchesSet = selectedSets.length === 0 || selectedSets.includes(card.set_name);
       const matchesRarity = selectedRarities.length === 0 || selectedRarities.includes(card.rarity);
+      const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(card.group_name || 'Unknown Group');
       
-      return matchesSearch && matchesSet && matchesRarity;
+      return matchesSearch && matchesSet && matchesRarity && matchesGroup;
     }).map((card, index) => (
-                <a
-                  key={index}
-                  href={card.card_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="card-item"
-                  style={{
-                    backgroundImage: card.image_url ? `url(${card.image_url})` : 'none'
-                  }}
-                >
-                  <div className="card-info">
-                    <div className="card-name">{card.name || 'Unknown'}</div>
-                    <div className="card-details">
-                      <div className="card-set">{card.set_name || ''}</div>
-                      {card.rarity && <div className="card-rarity">{card.rarity}</div>}
-                    </div>
-                  </div>
-                </a>
+                <LazyCard key={index} card={card} />
               ))}
             </div>
           </div>
