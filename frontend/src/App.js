@@ -51,6 +51,7 @@ function LazyCard({ card }) {
         <div className="card-name">{card.name || 'Unknown'}</div>
         <div className="card-details">
           <div className="card-set">{card.set_name || ''}</div>
+          <div className="card-group">{card.group_name || ''}</div>
           {card.rarity && <div className="card-rarity">{card.rarity}</div>}
         </div>
       </div>
