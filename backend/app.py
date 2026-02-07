@@ -153,28 +153,12 @@ def match_card_to_product(card_info, products_index):
 def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_cache):
     """Get card details from TCGPlayer CSV API"""
     try:
-        # Special case mappings
-        set_name_mappings = {
-            "Scarlet & Violet Black Star Promos": "SV: Scarlet & Violet Promo Cards",
-            "SWSH Black Star Promos": "SWSH: Sword & Shield Promo Cards"
-        }
+        # Fix common typo in set names
+        if "Accended" in set_name:
+            set_name = set_name.replace("Accended", "Ascended")
         
-        # Check if this is a special case
-        if set_name in set_name_mappings:
-            mapped_name = set_name_mappings[set_name]
-            group_id = all_groups.get(mapped_name)
-            if not group_id:
-                # Try fuzzy matching with mapped name
-                for group_name, gid in all_groups.items():
-                    if mapped_name.lower() in group_name.lower() or group_name.lower() in mapped_name.lower():
-                        group_id = gid
-                        break
-        else:
-            group_id = None
-        
-        # Find matching group (if not already found via special mapping)
-        if not group_id:
-            group_id = all_groups.get(set_name)
+        # Find matching group
+        group_id = all_groups.get(set_name)
         if not group_id:
             # Try fuzzy matching
             for group_name, gid in all_groups.items():
@@ -215,6 +199,44 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
                     if abbreviation.lower() in group_name.lower() or group_name.lower().startswith(abbreviation.lower()):
                         group_id = gid
                         break
+        
+        # If no group found and set name contains "promo", try all promo groups first
+        if not group_id and "promo" in set_name.lower():
+            promo_groups = []
+            
+            # Find all groups with "promo" in the name
+            for group_name, gid in all_groups.items():
+                if "promo" in group_name.lower():
+                    promo_groups.append((group_name, gid))
+            
+            # Try to find the card in any promo group
+            for promo_name, promo_gid in promo_groups:
+                with products_cache_lock:
+                    if promo_gid not in products_cache:
+                        products_cache[promo_gid] = tcgcsv_service.get_products(promo_gid)
+                
+                promo_products = products_cache[promo_gid]
+                if promo_products:
+                    # Build index for promo group if needed
+                    if promo_gid not in products_index_cache:
+                        products_index_cache[promo_gid] = build_products_index(promo_products)
+                    
+                    promo_products_index = products_index_cache[promo_gid]
+                    product = match_card_to_product(card_info, promo_products_index)
+                    if product:
+                        # Extract relevant data
+                        extended_data_dict = {}
+                        for data in product.get("extendedData", []):
+                            extended_data_dict[data.get("name")] = data.get("value")
+                        
+                        return {
+                            "name": product.get("name", ""),
+                            "image_url": product.get("imageUrl", ""),
+                            "rarity": extended_data_dict.get("Rarity", ""),
+                            "group_name": promo_name,
+                            "set_name": set_name,
+                            "card_url": f"https://mytcgcollection.com{card_info.get('url', '')}" if card_info.get('url') else "",
+                        }
         
         if not group_id:
             print(f"  No group found for set: {set_name}")

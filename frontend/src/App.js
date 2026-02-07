@@ -3,8 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import './App.css';
 
-const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
-// const API_URL = 'http://127.0.0.1:5000/api';
+// const API_URL = 'https://backend-tcg-912009530954.europe-west2.run.app/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000/api';
 
 function LazyCard({ card }) {
   const [isVisible, setIsVisible] = useState(false);
@@ -68,7 +68,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   
-  const hasLoadedInitialUrl = useRef(false);
+  const lastLoadedUrl = useRef(null);
 
   const [selectedSets, setSelectedSets] = useState([]);
   const [selectedRarities, setSelectedRarities] = useState([]);
@@ -97,16 +97,16 @@ function App() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setSearchParams({ url });
-    await scrapeUrl(url);
   };
 
   useEffect(() => {
     const urlParam = searchParams.get('url');
-    if (urlParam && !hasLoadedInitialUrl.current) {
-      hasLoadedInitialUrl.current = true;
+    if (urlParam && urlParam !== lastLoadedUrl.current) {
+      lastLoadedUrl.current = urlParam;
+      setUrl(urlParam);
       scrapeUrl(urlParam);
     }
-  }, []);
+  }, [searchParams]);
 
 
   const getSetCounts = () => {
