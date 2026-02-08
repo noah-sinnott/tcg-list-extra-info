@@ -116,7 +116,7 @@ function App() {
         counts[card.set_name] = (counts[card.set_name] || 0) + 1;
       }
     });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
   };
 
   const getRarityCounts = () => {
@@ -126,7 +126,7 @@ function App() {
         counts[card.rarity] = (counts[card.rarity] || 0) + 1;
       }
     });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
   };
 
   const getGroupCounts = () => {
@@ -135,7 +135,7 @@ function App() {
       const groupName = card.group_name || 'Unknown Group';
       counts[groupName] = (counts[groupName] || 0) + 1;
     });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
   };
 
   const toggleSet = (set) => {
