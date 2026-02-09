@@ -44,6 +44,23 @@ class WebDriverPool:
             chrome_options.add_argument("--disable-logging")
             chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
             chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            # Performance optimizations
+            chrome_options.add_argument("--disable-images")
+            chrome_options.add_argument("--disable-css")
+            chrome_options.add_argument("--disable-javascript")
+            chrome_options.add_argument("--blink-settings=imagesEnabled=false")
+            chrome_options.add_experimental_option("prefs", {
+                "profile.managed_default_content_settings.images": 2,
+                "profile.default_content_setting_values.notifications": 2,
+                "profile.managed_default_content_settings.stylesheets": 2,
+                "profile.managed_default_content_settings.cookies": 2,
+                "profile.managed_default_content_settings.javascript": 1,
+                "profile.managed_default_content_settings.plugins": 2,
+                "profile.managed_default_content_settings.popups": 2,
+                "profile.managed_default_content_settings.geolocation": 2,
+                "profile.managed_default_content_settings.media_stream": 2,
+            })
+            chrome_options.page_load_strategy = 'eager'
             
             service = Service(ChromeDriverManager().install())
             driver = webdriver.Chrome(service=service, options=chrome_options)

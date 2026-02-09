@@ -24,7 +24,7 @@ CORS(app, resources={
 tcgcsv_service = TCGCSVService()
 
 # Initialize WebDriver pool at startup
-driver_pool = get_pool(pool_size=1)
+driver_pool = get_pool(pool_size=3)
 
 # In-memory cache for indexed products (for faster lookups)
 products_index_cache = {}
@@ -44,7 +44,7 @@ def get_list_cards_selenium(list_url):
             raise Exception("Could not get WebDriver from pool")
         
         driver.get(list_url)
-        wait = WebDriverWait(driver, 7)
+        wait = WebDriverWait(driver, 5)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-cardid]")))
         soup = BeautifulSoup(driver.page_source, "html.parser")
         cards_by_set = {}
@@ -368,11 +368,12 @@ def scrape_list():
         if not all_groups:
             return jsonify({"error": "Failed to fetch TCGPlayer groups"}), 500
         
-        # Process all sources
+        # Process all sources in parallel
         all_results = []
         products_cache = {}
         
-        for source in sources:
+        def process_source(source):
+            """Process a single source and return its results"""
             list_url = source['url']
             source_name = source.get('name', 'Unknown Source')
             
@@ -382,7 +383,7 @@ def scrape_list():
             cards_by_set = get_list_cards_selenium(list_url)
             if not cards_by_set:
                 print(f"  No cards found for {source_name}")
-                continue
+                return []
             
             # Flatten cards with their set names for parallel processing
             card_tasks = []
@@ -393,8 +394,10 @@ def scrape_list():
             total_cards = len(card_tasks)
             print(f"  Processing {total_cards} cards from {source_name}...")
             
+            source_results = []
+            
             # Process cards in parallel with ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=10) as executor:
+            with ThreadPoolExecutor(max_workers=15) as executor:
                 # Submit all tasks
                 future_to_card = {
                     executor.submit(
@@ -420,12 +423,24 @@ def scrape_list():
                             # Add source name to card details
                             card_info, set_name, source_name = future_to_card[future]
                             card_details['source_name'] = source_name
-                            all_results.append(card_details)
+                            source_results.append(card_details)
                     except Exception as e:
                         card_info, set_name, source_name = future_to_card[future]
                         print(f"  Error processing {card_info['name']}: {e}")
             
-            print(f"  Completed {source_name}: {sum(1 for r in all_results if r.get('source_name') == source_name)}/{total_cards} cards matched")
+            print(f"  Completed {source_name}: {len(source_results)}/{total_cards} cards matched")
+            return source_results
+        
+        # Process all sources in parallel using ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(len(sources), 3)) as executor:
+            source_futures = [executor.submit(process_source, source) for source in sources]
+            
+            for future in as_completed(source_futures):
+                try:
+                    source_results = future.result()
+                    all_results.extend(source_results)
+                except Exception as e:
+                    print(f"  Error processing source: {e}")
         
         print(f"\n=== Overall Completed: {len(all_results)} cards matched from {len(sources)} list(s) ===")
         
