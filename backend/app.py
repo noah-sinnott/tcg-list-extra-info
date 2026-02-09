@@ -338,21 +338,28 @@ def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_ca
 
 @app.route('/api/scrape', methods=['POST'])
 def scrape_list():
-    """API endpoint to scrape TCG list"""
+    """API endpoint to scrape TCG list(s)"""
     try:
         data = request.get_json()
-        list_url = data.get('url')
         
-        if not list_url:
-            return jsonify({"error": "URL is required"}), 400
+        # Support both old single URL format and new multiple sources format
+        sources = data.get('sources', [])
+        single_url = data.get('url')
         
-        if not list_url.startswith("https://mytcgcollection.com/"):
-            return jsonify({"error": "Invalid URL. Must be a mytcgcollection.com list URL"}), 400
+        # If old format is used, convert to new format
+        if single_url and not sources:
+            sources = [{'url': single_url, 'name': 'List 1'}]
         
-        # Get cards grouped by set
-        cards_by_set = get_list_cards_selenium(list_url)
-        if not cards_by_set:
-            return jsonify({"error": "No cards found on the list"}), 404
+        if not sources:
+            return jsonify({"error": "At least one URL is required"}), 400
+        
+        # Validate all URLs
+        for source in sources:
+            url = source.get('url', '')
+            if not url:
+                return jsonify({"error": "Each source must have a URL"}), 400
+            if not url.startswith("https://mytcgcollection.com/"):
+                return jsonify({"error": f"Invalid URL: {url}. Must be a mytcgcollection.com list URL"}), 400
         
         # Fetch all TCGPlayer groups once (with caching)
         print("Fetching TCGPlayer groups...")
@@ -361,55 +368,72 @@ def scrape_list():
         if not all_groups:
             return jsonify({"error": "Failed to fetch TCGPlayer groups"}), 500
         
-        # Process cards in parallel
-        results = []
+        # Process all sources
+        all_results = []
         products_cache = {}
-        total_cards = sum(len(cards) for cards in cards_by_set.values())
         
-        # Flatten cards with their set names for parallel processing
-        card_tasks = []
-        for set_name, card_infos in cards_by_set.items():
-            for card_info in card_infos:
-                card_tasks.append((card_info, set_name))
-        
-        print(f"Processing {total_cards} cards in parallel...")
-        
-        # Process cards in parallel with ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            # Submit all tasks
-            future_to_card = {
-                executor.submit(
-                    get_card_details_from_tcgplayer,
-                    card_info,
-                    set_name,
-                    all_groups,
-                    products_cache
-                ): (card_info, set_name)
-                for card_info, set_name in card_tasks
-            }
+        for source in sources:
+            list_url = source['url']
+            source_name = source.get('name', 'Unknown Source')
             
-            # Collect results as they complete
-            completed = 0
-            for future in as_completed(future_to_card):
-                completed += 1
-                if completed % 10 == 0 or completed == total_cards:
-                    print(f"Progress: {completed}/{total_cards} cards processed")
+            print(f"\nProcessing list: {source_name} ({list_url})")
+            
+            # Get cards grouped by set for this source
+            cards_by_set = get_list_cards_selenium(list_url)
+            if not cards_by_set:
+                print(f"  No cards found for {source_name}")
+                continue
+            
+            # Flatten cards with their set names for parallel processing
+            card_tasks = []
+            for set_name, card_infos in cards_by_set.items():
+                for card_info in card_infos:
+                    card_tasks.append((card_info, set_name, source_name))
+            
+            total_cards = len(card_tasks)
+            print(f"  Processing {total_cards} cards from {source_name}...")
+            
+            # Process cards in parallel with ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                # Submit all tasks
+                future_to_card = {
+                    executor.submit(
+                        get_card_details_from_tcgplayer,
+                        card_info,
+                        set_name,
+                        all_groups,
+                        products_cache
+                    ): (card_info, set_name, source_name)
+                    for card_info, set_name, source_name in card_tasks
+                }
                 
-                try:
-                    card_details = future.result()
-                    if card_details:
-                        results.append(card_details)
-                except Exception as e:
-                    card_info, set_name = future_to_card[future]
-                    print(f"Error processing {card_info['name']}: {e}")
+                # Collect results as they complete
+                completed = 0
+                for future in as_completed(future_to_card):
+                    completed += 1
+                    if completed % 10 == 0 or completed == total_cards:
+                        print(f"  Progress: {completed}/{total_cards} cards processed for {source_name}")
+                    
+                    try:
+                        card_details = future.result()
+                        if card_details:
+                            # Add source name to card details
+                            card_info, set_name, source_name = future_to_card[future]
+                            card_details['source_name'] = source_name
+                            all_results.append(card_details)
+                    except Exception as e:
+                        card_info, set_name, source_name = future_to_card[future]
+                        print(f"  Error processing {card_info['name']}: {e}")
+            
+            print(f"  Completed {source_name}: {sum(1 for r in all_results if r.get('source_name') == source_name)}/{total_cards} cards matched")
         
-        print(f"\nCompleted: {len(results)}/{total_cards} cards matched")
+        print(f"\n=== Overall Completed: {len(all_results)} cards matched from {len(sources)} list(s) ===")
         
         return jsonify({
             "success": True,
-            "cards": results,
-            "total": total_cards,
-            "matched": len(results)
+            "cards": all_results,
+            "total": len(all_results),
+            "matched": len(all_results)
         })
     
     except Exception as e:

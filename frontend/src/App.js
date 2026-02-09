@@ -50,6 +50,7 @@ function LazyCard({ card }) {
       <div className="card-info">
         <div className="card-name">{card.name || 'Unknown'}</div>
         <div className="card-details">
+          {card.source_name && <div className="card-source">{card.source_name}</div>}
           <div className="card-set">{card.set_name || ''}</div>
           <div className="card-group">{card.group_name || ''}</div>
           {card.rarity && <div className="card-rarity">{card.rarity}</div>}
@@ -61,52 +62,98 @@ function LazyCard({ card }) {
 
 function App() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [url, setUrl] = useState(searchParams.get('url') || '');
   const [searchTerm, setSearchTerm] = useState('');
 
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  
-  const lastLoadedUrl = useRef(null);
 
   const [selectedSets, setSelectedSets] = useState([]);
   const [selectedRarities, setSelectedRarities] = useState([]);
   const [selectedGroups, setSelectedGroups] = useState([]);
+  const [selectedSources, setSelectedSources] = useState([]);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
 
-  const scrapeUrl = async (urlToScrape) => {
+  // State for managing multiple URL sources
+  const [sources, setSources] = useState([]);
+  const [currentUrl, setCurrentUrl] = useState('');
+  const [currentName, setCurrentName] = useState('');
+
+  // Load sources from URL params on mount
+  useEffect(() => {
+    const sourcesParam = searchParams.get('sources');
+    if (sourcesParam) {
+      try {
+        const decodedSources = JSON.parse(decodeURIComponent(sourcesParam));
+        setSources(decodedSources);
+      } catch (err) {
+        console.error('Failed to parse sources from URL', err);
+      }
+    }
+  }, []);
+
+  // Update URL params when sources change
+  const updateSourcesInUrl = (newSources) => {
+    if (newSources.length > 0) {
+      setSearchParams({ sources: encodeURIComponent(JSON.stringify(newSources)) });
+    } else {
+      setSearchParams({});
+    }
+  };
+
+  const addSource = () => {
+    if (!currentUrl) {
+      setError('Please enter a URL');
+      return;
+    }
+    if (!currentUrl.startsWith("https://mytcgcollection.com/")) {
+      setError('Invalid URL. Must be a mytcgcollection.com list URL');
+      return;
+    }
+    
+    const newSource = {
+      url: currentUrl,
+      name: currentName || `List ${sources.length + 1}`
+    };
+    
+    const newSources = [...sources, newSource];
+    setSources(newSources);
+    updateSourcesInUrl(newSources);
+    setCurrentUrl('');
+    setCurrentName('');
+    setError('');
+  };
+
+  const removeSource = (index) => {
+    const newSources = sources.filter((_, i) => i !== index);
+    setSources(newSources);
+    updateSourcesInUrl(newSources);
+  };
+
+  const scrapeLists = async () => {
+    if (sources.length === 0) {
+      setError('Please add at least one URL to scrape');
+      return;
+    }
+
     setError('');
     setCards([]);
     setSelectedSets([]);
     setSelectedRarities([]);
     setSelectedGroups([]);
+    setSelectedSources([]);
     setSearchTerm('');
     setLoading(true);
 
     try {
-      const response = await axios.post(`${API_URL}/scrape`, { url: urlToScrape });
+      const response = await axios.post(`${API_URL}/scrape`, { sources });
       setCards(response.data.cards);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to scrape list. Please try again.');
+      setError(err.response?.data?.error || 'Failed to scrape lists. Please try again.');
     } finally {
       setLoading(false);
     }
   };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setSearchParams({ url });
-  };
-
-  useEffect(() => {
-    const urlParam = searchParams.get('url');
-    if (urlParam && urlParam !== lastLoadedUrl.current) {
-      lastLoadedUrl.current = urlParam;
-      setUrl(urlParam);
-      scrapeUrl(urlParam);
-    }
-  }, [searchParams]);
 
 
   const getSetCounts = () => {
@@ -138,6 +185,15 @@ function App() {
     return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
   };
 
+  const getSourceCounts = () => {
+    const counts = {};
+    cards.forEach(card => {
+      const sourceName = card.source_name || 'Unknown Source';
+      counts[sourceName] = (counts[sourceName] || 0) + 1;
+    });
+    return Object.entries(counts).sort((a, b) => a[0].localeCompare(b[0]));
+  };
+
   const toggleSet = (set) => {
     setSelectedSets(prev => 
       prev.includes(set) ? prev.filter(s => s !== set) : [...prev, set]
@@ -156,28 +212,67 @@ function App() {
     );
   };
 
+  const toggleSource = (source) => {
+    setSelectedSources(prev => 
+      prev.includes(source) ? prev.filter(s => s !== source) : [...prev, source]
+    );
+  };
+
   const setCounts = getSetCounts();
   const rarityCounts = getRarityCounts();
   const groupCounts = getGroupCounts();
+  const sourceCounts = getSourceCounts();
 
   return (
     <div className="App">
       <div className="container">
         <h1>TCG List Extra</h1>
         
-        <form onSubmit={handleSubmit} className="url-form">
-          <input
-            type="text"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="Enter TCG list URL (e.g., https://mytcgcollection.com/p/...)"
-            className="url-input"
-            required
-          />
-          <button type="submit" disabled={loading} className="submit-btn">
-            {loading ? 'Scraping...' : 'Scrape List'}
-          </button>
-        </form>
+        <div className="sources-manager">
+          <div className="add-source-form">
+            <input
+              type="text"
+              value={currentUrl}
+              onChange={(e) => setCurrentUrl(e.target.value)}
+              placeholder="Enter TCG list URL (e.g., https://mytcgcollection.com/p/...)"
+              className="url-input"
+            />
+            <input
+              type="text"
+              value={currentName}
+              onChange={(e) => setCurrentName(e.target.value)}
+              placeholder="Name (optional)"
+              className="name-input"
+            />
+            <button onClick={addSource} className="add-btn">
+              Add URL
+            </button>
+          </div>
+
+          {sources.length > 0 && (
+            <div className="sources-list">
+              <h3>URLs to Scrape ({sources.length})</h3>
+              {sources.map((source, index) => (
+                <div key={index} className="source-item">
+                  <div className="source-info">
+                    <span className="source-name">{source.name}</span>
+                    <span className="source-url">{source.url}</span>
+                  </div>
+                  <button onClick={() => removeSource(index)} className="remove-btn">
+                    ×
+                  </button>
+                </div>
+              ))}
+              <button 
+                onClick={scrapeLists} 
+                disabled={loading} 
+                className="scrape-all-btn"
+              >
+                {loading ? 'Scraping...' : `Scrape ${sources.length} List${sources.length > 1 ? 's' : ''}`}
+              </button>
+            </div>
+          )}
+        </div>
 
         {error && <div className="error">{error}</div>}
 
@@ -261,13 +356,32 @@ function App() {
                     </div>
                   </div>
 
-                  {(searchTerm || selectedSets.length > 0 || selectedRarities.length > 0 || selectedGroups.length > 0) && (
+                  {sourceCounts.length > 1 && (
+                    <div className="filter-group">
+                      <label className="filter-label">Sources ({sourceCounts.length})</label>
+                      <div className="checkbox-group">
+                        {sourceCounts.map(([source, count]) => (
+                          <label key={source} className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={selectedSources.includes(source)}
+                              onChange={() => toggleSource(source)}
+                            />
+                            <span>{source} ({count})</span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(searchTerm || selectedSets.length > 0 || selectedRarities.length > 0 || selectedGroups.length > 0 || selectedSources.length > 0) && (
                     <button 
                       onClick={() => {
                         setSearchTerm('');
                         setSelectedSets([]);
                         setSelectedRarities([]);
                         setSelectedGroups([]);
+                        setSelectedSources([]);
                       }}
                       className="clear-filters-btn"
                     >
@@ -291,8 +405,9 @@ function App() {
       const matchesSet = selectedSets.length === 0 || selectedSets.includes(card.set_name);
       const matchesRarity = selectedRarities.length === 0 || selectedRarities.includes(card.rarity);
       const matchesGroup = selectedGroups.length === 0 || selectedGroups.includes(card.group_name || 'Unknown Group');
+      const matchesSource = selectedSources.length === 0 || selectedSources.includes(card.source_name || 'Unknown Source');
       
-      return matchesSearch && matchesSet && matchesRarity && matchesGroup;
+      return matchesSearch && matchesSet && matchesRarity && matchesGroup && matchesSource;
     }).map((card, index) => (
                 <LazyCard key={index} card={card} />
               ))}
