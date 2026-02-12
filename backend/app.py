@@ -1,446 +1,196 @@
+"""
+Flask application – thin route handler.
+All business logic lives in browser_service, card_matcher and tcgcsv_service.
+"""
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from bs4 import BeautifulSoup
-import re
-import unicodedata
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
+
 from tcgcsv_service import TCGCSVService
-from webdriver_pool_service import get_pool
+from browser_service import start_browser, get_shared_browser, run_async, scrape_all_lists
+from card_matcher import normalize_text, get_card_details
 
-
+# ---------------------------------------------------------------------------
+# App setup
+# ---------------------------------------------------------------------------
 
 app = Flask(__name__)
 CORS(app, resources={
     r"/api/*": {
         "origins": "*",
         "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"]
+        "allow_headers": ["Content-Type"],
     }
 })
+
 tcgcsv_service = TCGCSVService()
 
-# Initialize browser pool at startup
-browser_pool = get_pool(pool_size=3)
-
-# In-memory cache for indexed products (for faster lookups)
-products_index_cache = {}
-
-# Thread lock for products cache to prevent duplicate fetches
-products_cache_lock = Lock()
+# Pre-load the shared Playwright browser in a background thread
+start_browser()
 
 
+# ---------------------------------------------------------------------------
+# Route
+# ---------------------------------------------------------------------------
 
-def get_list_cards_selenium(list_url):
-    """Scrape cards from list URL using a pooled Playwright browser"""
-    page = None
-    context = None
-    try:
-        # Get page from pool
-        page, context = browser_pool.get_page(timeout=30)
-        if not page:
-            raise Exception("Could not get browser page from pool")
-        
-        page.goto(list_url, wait_until="domcontentloaded")
-        page.wait_for_selector("div[data-cardid]", timeout=5000)
-        soup = BeautifulSoup(page.content(), "html.parser")
-        cards_by_set = {}
-        card_elements = soup.select("div[data-cardid]")
-        for card_elem in card_elements:
-            card_name = card_elem.get("data-name", "")
-            card_number = card_elem.get("data-number", "")
-
-            if not card_name or not card_number:
-                continue
-            
-            # Extract set name from the gray text paragraph
-            set_name_elem = card_elem.select_one("div.flex.justify-between.mb-4 p.text-gray-500")
-            set_name = set_name_elem.get_text(strip=True) if set_name_elem else "Unknown"
-            
-            # Extract card URL
-            card_link = card_elem.select_one("a[href^='/card/']")
-            card_url = card_link.get("href", "") if card_link else ""
-            
-            if set_name not in cards_by_set:
-                cards_by_set[set_name] = []
-            cards_by_set[set_name].append({
-                "name": card_name,
-                "number": card_number,
-                "url": card_url
-            })
-        
-        return cards_by_set
-        
-    finally:
-        if page or context:
-            # Return page/context to pool (they will be closed and replaced)
-            browser_pool.return_page(page, context)
-
-
-
-
-def normalize_text(text):
-    normalized = text.lower()
-    normalized = unicodedata.normalize('NFD', normalized)
-    normalized = ''.join(char for char in normalized if unicodedata.category(char) != 'Mn')
-    normalized = re.sub(r'[^a-z0-9\s]', '', normalized)
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    return normalized
-
-
-def extract_card_suffixes(text):
-    suffixes = []
-    text_lower = text.lower()
-    special_suffixes = ['vmax', 'vstar', 'ex', 'gx', 'v']
-    for suffix in special_suffixes:
-        if re.search(r'\b' + suffix + r'\b', text_lower):
-            suffixes.append(suffix)
-    return set(suffixes)
-
-
-def build_products_index(products):
-    """Build an index of products by card number for fast lookup"""
-    index = {}
-    for product in products:
-        extended_data = product.get("extendedData", [])
-        for data in extended_data:
-            if data.get("name") == "Number":
-                product_number = data.get("value", "")
-                if "/" in product_number:
-                    product_number = product_number.split("/")[0]
-                # Normalize number (remove leading zeros)
-                normalized_number = product_number.lstrip("0") or "0"
-                if normalized_number not in index:
-                    index[normalized_number] = []
-                index[normalized_number].append(product)
-                break
-    return index
-
-
-def match_card_to_product(card_info, products_index):
-    """Match a card to a product using indexed lookup"""
-    card_number = card_info["number"]
-    card_name = card_info["name"]
-    normalized_card_number = card_number.lstrip("0") or "0"
-    normalized_card_name = normalize_text(card_name)
-    card_suffixes = extract_card_suffixes(card_name)
-    
-    # Use indexed lookup - only check products with matching card number
-    matching_products = products_index.get(normalized_card_number, [])
-    
-    for product in matching_products:
-        product_names = []
-        if product.get("cleanName"):
-            product_names.append(product.get("cleanName"))
-        if product.get("name"):
-            product_names.append(product.get("name"))
-        
-        for product_name in product_names:
-            normalized_product_name = normalize_text(product_name)
-            product_suffixes = extract_card_suffixes(product_name)
-            if card_suffixes != product_suffixes:
-                continue
-            if normalized_card_name in normalized_product_name or normalized_product_name in normalized_card_name:
-                return product
-    
-    return None
-
-
-
-def get_card_details_from_tcgplayer(card_info, set_name, all_groups, products_cache):
-    """Get card details from TCGPlayer CSV API"""
-    try:
-        # Fix common typo in set names
-        if "Accended" in set_name:
-            set_name = set_name.replace("Accended", "Ascended")
-        
-        # Find matching group
-        group_id = all_groups.get(set_name)
-        if not group_id:
-            # Try fuzzy matching
-            for group_name, gid in all_groups.items():
-                if set_name.lower() in group_name.lower() or group_name.lower() in set_name.lower():
-                    group_id = gid
-                    break
-        
-        # If still not found and set name contains "&", try without it
-        if not group_id and "&" in set_name:
-            modified_set_name = set_name.replace("& ", "").replace("&", "")
-            group_id = all_groups.get(modified_set_name)
-            if not group_id:
-                # Try fuzzy matching with modified name
-                for group_name, gid in all_groups.items():
-                    if modified_set_name.lower() in group_name.lower() or group_name.lower() in modified_set_name.lower():
-                        group_id = gid
-                        break
-        
-        # If still not found, try replacing "&" with "and"
-        if not group_id and "&" in set_name:
-            modified_set_name = set_name.replace("&", "and")
-            group_id = all_groups.get(modified_set_name)
-            if not group_id:
-                # Try fuzzy matching with "and" version
-                for group_name, gid in all_groups.items():
-                    if modified_set_name.lower() in group_name.lower() or group_name.lower() in modified_set_name.lower():
-                        group_id = gid
-                        break
-        
-        # If still not found, try abbreviation (e.g., "Sun & Moon" -> "SM")
-        if not group_id and "&" in set_name:
-            words = set_name.replace("&", "").split()
-            abbreviation = "".join(word[0].upper() for word in words if word)
-            group_id = all_groups.get(abbreviation)
-            if not group_id:
-                # Try fuzzy matching with abbreviation
-                for group_name, gid in all_groups.items():
-                    if abbreviation.lower() in group_name.lower() or group_name.lower().startswith(abbreviation.lower()):
-                        group_id = gid
-                        break
-        
-        # If no group found and set name contains "promo", try all promo groups first
-        if not group_id and "promo" in set_name.lower():
-            promo_groups = []
-            
-            # Find all groups with "promo" in the name
-            for group_name, gid in all_groups.items():
-                if "promo" in group_name.lower():
-                    promo_groups.append((group_name, gid))
-            
-            # Try to find the card in any promo group
-            for promo_name, promo_gid in promo_groups:
-                with products_cache_lock:
-                    if promo_gid not in products_cache:
-                        products_cache[promo_gid] = tcgcsv_service.get_products(promo_gid)
-                
-                promo_products = products_cache[promo_gid]
-                if promo_products:
-                    # Build index for promo group if needed
-                    if promo_gid not in products_index_cache:
-                        products_index_cache[promo_gid] = build_products_index(promo_products)
-                    
-                    promo_products_index = products_index_cache[promo_gid]
-                    product = match_card_to_product(card_info, promo_products_index)
-                    if product:
-                        # Extract relevant data
-                        extended_data_dict = {}
-                        for data in product.get("extendedData", []):
-                            extended_data_dict[data.get("name")] = data.get("value")
-                        
-                        return {
-                            "name": product.get("name", ""),
-                            "image_url": product.get("imageUrl", ""),
-                            "rarity": extended_data_dict.get("Rarity", ""),
-                            "group_name": promo_name,
-                            "set_name": set_name,
-                            "card_url": f"https://mytcgcollection.com{card_info.get('url', '')}" if card_info.get('url') else "",
-                        }
-        
-        if not group_id:
-            print(f"  No group found for set: {set_name}")
-            return None
-        
-        # Get products for this group (with caching and thread safety)
-        with products_cache_lock:
-            if group_id not in products_cache:
-                products_cache[group_id] = tcgcsv_service.get_products(group_id)
-        
-        products = products_cache[group_id]
-        if not products:
-            return None
-        
-        # Build index for this group if not already done (fast, happens in memory)
-        if group_id not in products_index_cache:
-            products_index_cache[group_id] = build_products_index(products)
-        
-        products_index = products_index_cache[group_id]
-        
-        # Try to match card using indexed lookup
-        product = match_card_to_product(card_info, products_index)
-        matched_group_name = None
-        
-        # Store the group name if we found a match
-        if product:
-            # Find the group name for this group_id
-            for group_name, gid in all_groups.items():
-                if gid == group_id:
-                    matched_group_name = group_name
-                    break
-        
-        # If no match found, check related groups (subsets)
-        if not product:
-            related_groups = []
-            
-            # Generate variant set names to search with
-            search_variants = [set_name.lower()]
-            
-            # Add variant without "&"
-            if "&" in set_name:
-                search_variants.append(set_name.replace("& ", "").replace("&", "").lower())
-                # Add variant with "and" instead of "&"
-                search_variants.append(set_name.replace("&", "and").lower())
-                # Add abbreviation variant (e.g., "Sun & Moon" -> "sm")
-                words = set_name.replace("&", "").split()
-                abbreviation = "".join(word[0].lower() for word in words if word)
-                if abbreviation:
-                    search_variants.append(abbreviation)
-            
-            # Find groups that contain any of the variant names as a substring
-            for group_name, gid in all_groups.items():
-                if gid != group_id:
-                    group_name_lower = group_name.lower()
-                    for variant in search_variants:
-                        if variant in group_name_lower:
-                            related_groups.append((group_name, gid))
-                            break  # Don't add the same group multiple times
-            
-            # Try to find the card in related groups
-            for related_name, related_gid in related_groups:
-                with products_cache_lock:
-                    if related_gid not in products_cache:
-                        products_cache[related_gid] = tcgcsv_service.get_products(related_gid)
-                
-                related_products = products_cache[related_gid]
-                if related_products:
-                    # Build index for related group if needed
-                    if related_gid not in products_index_cache:
-                        products_index_cache[related_gid] = build_products_index(related_products)
-                    
-                    related_products_index = products_index_cache[related_gid]
-                    product = match_card_to_product(card_info, related_products_index)
-                    if product:
-                        matched_group_name = related_name
-                        break
-        
-        if not product:
-            print(f"  No product match for {card_info['name']} #{card_info['number']} in {set_name}")
-            return None
-        
-        # Extract relevant data
-        extended_data_dict = {}
-        for data in product.get("extendedData", []):
-            extended_data_dict[data.get("name")] = data.get("value")
-        
-        return {
-            "name": product.get("name", ""),
-            "image_url": product.get("imageUrl", ""),
-            "rarity": extended_data_dict.get("Rarity", ""),
-            "group_name": matched_group_name or set_name,
-            "set_name": set_name,
-            "card_url": f"https://mytcgcollection.com{card_info.get('url', '')}" if card_info.get('url') else "",
-        }
-    except Exception as e:
-        print(f"  Error processing: {e}")
-        return None
-
-
-@app.route('/api/scrape', methods=['POST'])
+@app.route("/api/scrape", methods=["POST"])
 def scrape_list():
-    """API endpoint to scrape TCG list(s)"""
+    """Scrape one or more mytcgcollection lists and match cards to TCGPlayer data."""
     try:
         data = request.get_json()
-        
-        # Support both old single URL format and new multiple sources format
-        sources = data.get('sources', [])
-        single_url = data.get('url')
-        
-        # If old format is used, convert to new format
-        if single_url and not sources:
-            sources = [{'url': single_url, 'name': 'List 1'}]
-        
+
+        # Support legacy single-URL format
+        sources = data.get("sources", [])
+        if not sources and data.get("url"):
+            sources = [{"url": data["url"], "name": "List 1"}]
+
         if not sources:
             return jsonify({"error": "At least one URL is required"}), 400
-        
-        # Validate all URLs
-        for source in sources:
-            url = source.get('url', '')
+
+        for src in sources:
+            url = src.get("url", "")
             if not url:
                 return jsonify({"error": "Each source must have a URL"}), 400
             if not url.startswith("https://mytcgcollection.com/"):
                 return jsonify({"error": f"Invalid URL: {url}. Must be a mytcgcollection.com list URL"}), 400
-        
-        # Fetch all TCGPlayer groups once (with caching)
+
+        # Fetch TCGPlayer groups (cached)
         print("Fetching TCGPlayer groups...")
         all_groups = tcgcsv_service.get_groups()
-        
         if not all_groups:
             return jsonify({"error": "Failed to fetch TCGPlayer groups"}), 500
-        
-        # Step 1: Scrape all sources SEQUENTIALLY (Playwright requires single thread)
-        all_card_tasks = []
-        products_cache = {}
-        
-        for source in sources:
-            list_url = source['url']
-            source_name = source.get('name', 'Unknown Source')
-            
-            print(f"\nProcessing list: {source_name} ({list_url})")
-            
+
+        # ---- Step 1: Concurrent scraping ----
+        print("\nStarting concurrent scraping of lists...")
+        browser = _wait_for_browser(timeout=15.0)
+
+        if browser is None:
+            scrape_results = _fallback_scrape(sources)
+        else:
             try:
-                # Get cards grouped by set for this source
-                cards_by_set = get_list_cards_selenium(list_url)
-                if not cards_by_set:
-                    print(f"  No cards found for {source_name}")
-                    continue
-                
-                # Flatten cards with their set names for parallel processing later
-                for set_name, card_infos in cards_by_set.items():
-                    for card_info in card_infos:
-                        all_card_tasks.append((card_info, set_name, source_name))
-                
-                print(f"  Found {sum(len(cards) for cards in cards_by_set.values())} cards from {source_name}")
-            except Exception as e:
-                print(f"  Error processing source {source_name}: {e}")
-        
-        # Step 2: Process all cards in PARALLEL (TCGCSV API calls are thread-safe)
-        total_cards = len(all_card_tasks)
-        print(f"\nProcessing {total_cards} total cards from {len(sources)} list(s)...")
-        
-        all_results = []
-        
-        with ThreadPoolExecutor(max_workers=15) as executor:
-            # Submit all tasks
-            future_to_card = {
-                executor.submit(
-                    get_card_details_from_tcgplayer,
-                    card_info,
-                    set_name,
-                    all_groups,
-                    products_cache
-                ): (card_info, set_name, source_name)
-                for card_info, set_name, source_name in all_card_tasks
-            }
-            
-            # Collect results as they complete
-            completed = 0
-            for future in as_completed(future_to_card):
-                completed += 1
-                if completed % 10 == 0 or completed == total_cards:
-                    print(f"  Progress: {completed}/{total_cards} cards processed")
-                
-                try:
-                    card_details = future.result()
-                    if card_details:
-                        # Add source name to card details
-                        card_info, set_name, source_name = future_to_card[future]
-                        card_details['source_name'] = source_name
-                        all_results.append(card_details)
-                except Exception as e:
-                    card_info, set_name, source_name = future_to_card[future]
-                    print(f"  Error processing {card_info['name']}: {e}")
-        
-        print(f"\n=== Overall Completed: {len(all_results)} cards matched from {len(sources)} list(s) ===")
-        
+                scrape_results = run_async(scrape_all_lists(sources, browser))
+            except Exception as exc:
+                print(f"Error running async scraper: {exc}")
+                scrape_results = [(s.get("name", "Unknown Source"), {}) for s in sources]
+
+        # ---- Deduplicate cards ----
+        dedupe_map = {}
+        total_raw = 0
+        for source_name, cards_by_set in scrape_results:
+            if not cards_by_set:
+                print(f"  No cards found for {source_name}")
+                continue
+            for set_name, cards in cards_by_set.items():
+                for card in cards:
+                    total_raw += 1
+                    key = _dedupe_key(card)
+                    if key not in dedupe_map:
+                        dedupe_map[key] = {
+                            "card_info": card,
+                            "set_names": {set_name},
+                            "sources": {source_name},
+                        }
+                    else:
+                        dedupe_map[key]["sources"].add(source_name)
+                        dedupe_map[key]["set_names"].add(set_name)
+
+        print(f"  Found {total_raw} raw cards, {len(dedupe_map)} unique after dedupe")
+
+        # ---- Step 2: Parallel card lookup ----
+        products_cache = {}
+        all_results = _lookup_cards(dedupe_map, all_groups, products_cache)
+
+        print(f"\n=== Completed: {len(all_results)} cards matched from {len(sources)} list(s) ===")
+
         return jsonify({
             "success": True,
             "cards": all_results,
             "total": len(all_results),
-            "matched": len(all_results)
+            "matched": len(all_results),
         })
-    
-    except Exception as e:
-        print(f"Error: {str(e)}")
-        return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
-if __name__ == '__main__':
+    except Exception as exc:
+        print(f"Error: {exc}")
+        return jsonify({"error": f"An error occurred: {exc}"}), 500
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _wait_for_browser(timeout=15.0):
+    """Block until the shared browser is ready or *timeout* elapses."""
+    waited = 0.0
+    while get_shared_browser() is None and waited < timeout:
+        time.sleep(0.25)
+        waited += 0.25
+    return get_shared_browser()
+
+
+def _fallback_scrape(sources):
+    """Run the async scraper in-process when the background browser isn't available."""
+    import asyncio
+    try:
+        return asyncio.run(scrape_all_lists(sources, None))
+    except Exception as exc:
+        print(f"Fallback scraper error: {exc}")
+        return [(s.get("name", "Unknown Source"), {}) for s in sources]
+
+
+def _dedupe_key(card):
+    """Build a deduplication key from a card's number + normalised name."""
+    num = (card.get("number", "").lstrip("0") or "0")
+    name = normalize_text(card.get("name", ""))
+    return f"{num}|{name}"
+
+
+def _lookup_cards(dedupe_map, all_groups, products_cache):
+    """Look up all unique cards in parallel and return matched results."""
+    total = len(dedupe_map)
+    print(f"\nProcessing {total} unique cards...")
+    results = []
+
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        future_to_key = {}
+        for key, info in dedupe_map.items():
+            chosen_set = next(iter(info["set_names"]))
+            fut = executor.submit(
+                get_card_details,
+                info["card_info"],
+                chosen_set,
+                all_groups,
+                products_cache,
+                tcgcsv_service,
+            )
+            future_to_key[fut] = key
+
+        completed = 0
+        for future in as_completed(future_to_key):
+            completed += 1
+            if completed % 10 == 0 or completed == total:
+                print(f"  Progress: {completed}/{total} cards processed")
+
+            key = future_to_key[future]
+            info = dedupe_map[key]
+            try:
+                details = future.result()
+                if details:
+                    src_list = sorted(info["sources"])
+                    details["source_names"] = src_list
+                    details["source_name"] = ", ".join(src_list)
+                    results.append(details)
+            except Exception as exc:
+                print(f"  Error processing {info['card_info'].get('name', '')}: {exc}")
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
     app.run(debug=True, port=5000)
 
