@@ -1,151 +1,148 @@
 """
-WebDriver Pool Service
-Manages a pool of pre-loaded WebDriver instances for improved performance
+Browser Pool Service (Playwright)
+Manages thread-local Playwright browser instances for thread-safe operation
 """
 import threading
-from queue import Queue, Empty
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+from playwright.sync_api import sync_playwright
 
 
-class WebDriverPool:
-    """Manages a pool of pre-loaded WebDriver instances"""
+# Thread-local storage for browser instances
+_thread_local = threading.local()
+
+
+class BrowserManager:
+    """Manages Playwright browser lifecycle for the current thread"""
+    
+    def __init__(self):
+        self._playwright = None
+        self._browser = None
+    
+    def _ensure_browser(self):
+        """Ensure browser is initialized for this thread"""
+        if self._browser is None:
+            print(f"Initializing Playwright browser for thread {threading.current_thread().name}...")
+            self._playwright = sync_playwright().start()
+            self._browser = self._playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-gpu",
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-extensions",
+                    "--disable-infobars",
+                ]
+            )
+        return self._browser
+    
+    def get_page(self, timeout=30):
+        """
+        Get a new page from a fresh context
+        
+        Args:
+            timeout: Not used, kept for API compatibility
+            
+        Returns:
+            tuple: (page, context)
+        """
+        browser = self._ensure_browser()
+        
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            java_script_enabled=True,
+            ignore_https_errors=True,
+            viewport={"width": 1280, "height": 720},
+        )
+        
+        page = context.new_page()
+        
+        # Block images, fonts, and other non-essential resources for speed
+        page.route("**/*.{png,jpg,jpeg,gif,svg,webp,ico,woff,woff2,ttf,eot}", lambda route: route.abort())
+        
+        print(f"Page created for thread {threading.current_thread().name}")
+        return page, context
+    
+    def return_page(self, page, context):
+        """
+        Close a used page and context
+        
+        Args:
+            page: The page instance to close
+            context: The context instance to close
+        """
+        try:
+            if page:
+                page.close()
+            if context:
+                context.close()
+                print("Context closed")
+        except Exception as e:
+            print(f"Error closing page/context: {e}")
+    
+    def shutdown(self):
+        """Shutdown browser for this thread"""
+        try:
+            if self._browser:
+                self._browser.close()
+            if self._playwright:
+                self._playwright.stop()
+            print(f"Browser shutdown for thread {threading.current_thread().name}")
+        except Exception as e:
+            print(f"Error during shutdown: {e}")
+
+
+def _get_thread_browser_manager():
+    """Get or create the BrowserManager for the current thread"""
+    if not hasattr(_thread_local, 'browser_manager'):
+        _thread_local.browser_manager = BrowserManager()
+    return _thread_local.browser_manager
+
+
+class BrowserPool:
+    """Thread-safe browser pool using thread-local storage"""
     
     def __init__(self, pool_size=3):
         """
-        Initialize the WebDriver pool
+        Initialize the browser pool
         
         Args:
-            pool_size: Number of WebDriver instances to maintain in the pool
+            pool_size: Not used, kept for API compatibility
         """
-        self.pool_size = pool_size
-        self.pool = Queue(maxsize=pool_size)
-        self.lock = threading.Lock()
-        
-        # Pre-load initial drivers
-        print(f"Initializing WebDriver pool with {pool_size} instances...")
-        for i in range(pool_size):
-            driver = self._create_driver()
-            if driver:
-                self.pool.put(driver)
-                print(f"  Driver {i+1}/{pool_size} loaded")
+        print(f"Initializing thread-local Playwright browser pool...")
     
-    def _create_driver(self):
-        """Create a new WebDriver instance with standard options"""
-        try:
-            chrome_options = Options()
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            chrome_options.add_argument("--log-level=3")
-            chrome_options.add_argument("--disable-logging")
-            chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
-            chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-            # Performance optimizations
-            chrome_options.add_argument("--disable-images")
-            chrome_options.add_argument("--disable-css")
-            chrome_options.add_argument("--disable-javascript")
-            chrome_options.add_argument("--blink-settings=imagesEnabled=false")
-            chrome_options.add_experimental_option("prefs", {
-                "profile.managed_default_content_settings.images": 2,
-                "profile.default_content_setting_values.notifications": 2,
-                "profile.managed_default_content_settings.stylesheets": 2,
-                "profile.managed_default_content_settings.cookies": 2,
-                "profile.managed_default_content_settings.javascript": 1,
-                "profile.managed_default_content_settings.plugins": 2,
-                "profile.managed_default_content_settings.popups": 2,
-                "profile.managed_default_content_settings.geolocation": 2,
-                "profile.managed_default_content_settings.media_stream": 2,
-            })
-            chrome_options.page_load_strategy = 'eager'
-            
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
-            return driver
-        except Exception as e:
-            print(f"Error creating WebDriver: {e}")
-            return None
+    def get_page(self, timeout=30):
+        """Get a page from the current thread's browser"""
+        manager = _get_thread_browser_manager()
+        return manager.get_page(timeout)
     
-    def get_driver(self, timeout=30):
-        """
-        Get a WebDriver from the pool and immediately create a replacement
-        
-        Args:
-            timeout: Maximum time to wait for a driver (seconds)
-            
-        Returns:
-            WebDriver instance or None if timeout
-        """
-        try:
-            driver = self.pool.get(timeout=timeout)
-            print(f"Driver acquired from pool (remaining: {self.pool.qsize()})")
-            
-            # Immediately create a new driver to replace the one we just took
-            def create_replacement():
-                new_driver = self._create_driver()
-                if new_driver:
-                    self.pool.put(new_driver)
-                    print(f"Replacement driver added to pool (current size: {self.pool.qsize()})")
-            
-            # Create replacement in a separate thread so it doesn't block
-            threading.Thread(target=create_replacement, daemon=True).start()
-            
-            return driver
-        except Empty:
-            print("Timeout waiting for available driver")
-            return None
-    
-    def return_driver(self, driver):
-        """
-        Close a used driver
-        
-        Args:
-            driver: The WebDriver instance to close
-        """
-        try:
-            if driver:
-                driver.quit()
-                print(f"Driver closed")
-        except Exception as e:
-            print(f"Error closing driver: {e}")
+    def return_page(self, page, context):
+        """Return/close a page"""
+        manager = _get_thread_browser_manager()
+        manager.return_page(page, context)
     
     def shutdown(self):
-        """Shutdown the pool and close all drivers"""
-        print("Shutting down WebDriver pool...")
-        
-        # Close all drivers in the pool
-        while not self.pool.empty():
-            try:
-                driver = self.pool.get_nowait()
-                driver.quit()
-            except Exception as e:
-                print(f"Error closing driver during shutdown: {e}")
-        
-        print("WebDriver pool shutdown complete")
+        """Shutdown is handled per-thread"""
+        print("Browser pool shutdown requested")
 
 
 # Global pool instance
-_driver_pool = None
+_browser_pool = None
 _pool_lock = threading.Lock()
 
 
 def get_pool(pool_size=3):
     """
-    Get or create the global WebDriver pool instance
+    Get or create the global browser pool instance
     
     Args:
-        pool_size: Number of drivers to maintain in the pool
+        pool_size: Number of contexts to maintain in the pool
         
     Returns:
-        WebDriverPool instance
+        BrowserPool instance
     """
-    global _driver_pool
+    global _browser_pool
     
     with _pool_lock:
-        if _driver_pool is None:
-            _driver_pool = WebDriverPool(pool_size=pool_size)
-        return _driver_pool
+        if _browser_pool is None:
+            _browser_pool = BrowserPool(pool_size=pool_size)
+        return _browser_pool
 

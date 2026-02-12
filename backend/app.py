@@ -5,9 +5,6 @@ import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from tcgcsv_service import TCGCSVService
 from webdriver_pool_service import get_pool
 
@@ -23,8 +20,8 @@ CORS(app, resources={
 })
 tcgcsv_service = TCGCSVService()
 
-# Initialize WebDriver pool at startup
-driver_pool = get_pool(pool_size=3)
+# Initialize browser pool at startup
+browser_pool = get_pool(pool_size=3)
 
 # In-memory cache for indexed products (for faster lookups)
 products_index_cache = {}
@@ -35,18 +32,18 @@ products_cache_lock = Lock()
 
 
 def get_list_cards_selenium(list_url):
-    """Scrape cards from list URL using a pooled WebDriver"""
-    driver = None
+    """Scrape cards from list URL using a pooled Playwright browser"""
+    page = None
+    context = None
     try:
-        # Get driver from pool
-        driver = driver_pool.get_driver(timeout=30)
-        if not driver:
-            raise Exception("Could not get WebDriver from pool")
+        # Get page from pool
+        page, context = browser_pool.get_page(timeout=30)
+        if not page:
+            raise Exception("Could not get browser page from pool")
         
-        driver.get(list_url)
-        wait = WebDriverWait(driver, 5)
-        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div[data-cardid]")))
-        soup = BeautifulSoup(driver.page_source, "html.parser")
+        page.goto(list_url, wait_until="domcontentloaded")
+        page.wait_for_selector("div[data-cardid]", timeout=5000)
+        soup = BeautifulSoup(page.content(), "html.parser")
         cards_by_set = {}
         card_elements = soup.select("div[data-cardid]")
         for card_elem in card_elements:
@@ -75,9 +72,9 @@ def get_list_cards_selenium(list_url):
         return cards_by_set
         
     finally:
-        if driver:
-            # Return driver to pool (it will be closed and replaced)
-            driver_pool.return_driver(driver)
+        if page or context:
+            # Return page/context to pool (they will be closed and replaced)
+            browser_pool.return_page(page, context)
 
 
 
@@ -368,79 +365,68 @@ def scrape_list():
         if not all_groups:
             return jsonify({"error": "Failed to fetch TCGPlayer groups"}), 500
         
-        # Process all sources in parallel
-        all_results = []
+        # Step 1: Scrape all sources SEQUENTIALLY (Playwright requires single thread)
+        all_card_tasks = []
         products_cache = {}
         
-        def process_source(source):
-            """Process a single source and return its results"""
+        for source in sources:
             list_url = source['url']
             source_name = source.get('name', 'Unknown Source')
             
             print(f"\nProcessing list: {source_name} ({list_url})")
             
-            # Get cards grouped by set for this source
-            cards_by_set = get_list_cards_selenium(list_url)
-            if not cards_by_set:
-                print(f"  No cards found for {source_name}")
-                return []
-            
-            # Flatten cards with their set names for parallel processing
-            card_tasks = []
-            for set_name, card_infos in cards_by_set.items():
-                for card_info in card_infos:
-                    card_tasks.append((card_info, set_name, source_name))
-            
-            total_cards = len(card_tasks)
-            print(f"  Processing {total_cards} cards from {source_name}...")
-            
-            source_results = []
-            
-            # Process cards in parallel with ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=15) as executor:
-                # Submit all tasks
-                future_to_card = {
-                    executor.submit(
-                        get_card_details_from_tcgplayer,
-                        card_info,
-                        set_name,
-                        all_groups,
-                        products_cache
-                    ): (card_info, set_name, source_name)
-                    for card_info, set_name, source_name in card_tasks
-                }
+            try:
+                # Get cards grouped by set for this source
+                cards_by_set = get_list_cards_selenium(list_url)
+                if not cards_by_set:
+                    print(f"  No cards found for {source_name}")
+                    continue
                 
-                # Collect results as they complete
-                completed = 0
-                for future in as_completed(future_to_card):
-                    completed += 1
-                    if completed % 10 == 0 or completed == total_cards:
-                        print(f"  Progress: {completed}/{total_cards} cards processed for {source_name}")
-                    
-                    try:
-                        card_details = future.result()
-                        if card_details:
-                            # Add source name to card details
-                            card_info, set_name, source_name = future_to_card[future]
-                            card_details['source_name'] = source_name
-                            source_results.append(card_details)
-                    except Exception as e:
-                        card_info, set_name, source_name = future_to_card[future]
-                        print(f"  Error processing {card_info['name']}: {e}")
-            
-            print(f"  Completed {source_name}: {len(source_results)}/{total_cards} cards matched")
-            return source_results
+                # Flatten cards with their set names for parallel processing later
+                for set_name, card_infos in cards_by_set.items():
+                    for card_info in card_infos:
+                        all_card_tasks.append((card_info, set_name, source_name))
+                
+                print(f"  Found {sum(len(cards) for cards in cards_by_set.values())} cards from {source_name}")
+            except Exception as e:
+                print(f"  Error processing source {source_name}: {e}")
         
-        # Process all sources in parallel using ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(len(sources), 3)) as executor:
-            source_futures = [executor.submit(process_source, source) for source in sources]
+        # Step 2: Process all cards in PARALLEL (TCGCSV API calls are thread-safe)
+        total_cards = len(all_card_tasks)
+        print(f"\nProcessing {total_cards} total cards from {len(sources)} list(s)...")
+        
+        all_results = []
+        
+        with ThreadPoolExecutor(max_workers=15) as executor:
+            # Submit all tasks
+            future_to_card = {
+                executor.submit(
+                    get_card_details_from_tcgplayer,
+                    card_info,
+                    set_name,
+                    all_groups,
+                    products_cache
+                ): (card_info, set_name, source_name)
+                for card_info, set_name, source_name in all_card_tasks
+            }
             
-            for future in as_completed(source_futures):
+            # Collect results as they complete
+            completed = 0
+            for future in as_completed(future_to_card):
+                completed += 1
+                if completed % 10 == 0 or completed == total_cards:
+                    print(f"  Progress: {completed}/{total_cards} cards processed")
+                
                 try:
-                    source_results = future.result()
-                    all_results.extend(source_results)
+                    card_details = future.result()
+                    if card_details:
+                        # Add source name to card details
+                        card_info, set_name, source_name = future_to_card[future]
+                        card_details['source_name'] = source_name
+                        all_results.append(card_details)
                 except Exception as e:
-                    print(f"  Error processing source: {e}")
+                    card_info, set_name, source_name = future_to_card[future]
+                    print(f"  Error processing {card_info['name']}: {e}")
         
         print(f"\n=== Overall Completed: {len(all_results)} cards matched from {len(sources)} list(s) ===")
         
